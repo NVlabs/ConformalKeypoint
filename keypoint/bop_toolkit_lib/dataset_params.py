@@ -8,7 +8,7 @@ import glob
 import os
 from os.path import join
 
-from bop_toolkit_lib import inout
+from ..bop_toolkit_lib import inout
 
 
 def get_camera_params(datasets_path, dataset_name, cam_type=None):

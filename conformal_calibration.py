@@ -1,19 +1,15 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import torch
 from torchvision import transforms as T
 import tqdm
 import pickle
 import argparse
 
-from models import FRCNN, StackedHourglass, fasterrcnn_backbone
-from bop_dataset import BOPDataset
+from keypoint.models import FRCNN, StackedHourglass, fasterrcnn_backbone
+from keypoint.bop_dataset import BOPDataset
+from keypoint.train.transforms import ToTensor, Normalize, AffineCrop
 
-from train.transforms import ToTensor, Normalize, AffineCrop, Normalize_imgnet
-from misc.pose2d_eval import Pose2DEval
-from bop_toolkit_lib.inout import save_bop_results
-
-from icp_heatmap import conformity_score
+from utils import conformity_score
 
 def one_each(pred, thresh=0.0):
     # Postprocess frcnn: get at most one instance per class
@@ -41,12 +37,12 @@ parser.add_argument('--score_type', action='store', type=str)
 parser.add_argument('--do_frcnn', action='store_true')
 args = parser.parse_args()
 
-score_type = args.score_type
-do_frcnn = args.do_frcnn
+score_type  = args.score_type
+do_frcnn    = args.do_frcnn
 
 # Load dataset 
 dataset_name = 'lmo'
-root         = './data/bop'
+root         = './keypoint/data/bop'
 num_classes  = {'lmo':8, 'lmo-org':8} 
 device       = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 dataset      = BOPDataset(root, dataset_name, split='test', return_coco=True)
@@ -67,7 +63,7 @@ transform_list.append(ToTensor())
 transform_list.append(Normalize())
 kpts_transform = T.Compose(transform_list)
 
-state_dict    = torch.load('data/kpts_checkpoints/{}.pt'.format(dataset_name), map_location=device)['stacked_hg']
+state_dict    = torch.load('keypoint/data/kpts_checkpoints/{}.pt'.format(dataset_name), map_location=device)['stacked_hg']
 kpts_detector = StackedHourglass(dataset.n_kpts).to(device)
 kpts_detector.eval()
 kpts_detector.load_state_dict(state_dict)
@@ -82,7 +78,7 @@ n_objs  = len(idx2obj)
 
 # Prepare to store obj scores
 obj_scores = [[] for i in range(n_objs)]
-print(f'conformity function: {score_type}.')
+print(f'nonconformity function: {score_type}.')
 
 # Compute conformity score on calibration dataset
 for i in tqdm.tqdm(range(n_smps)):
@@ -140,14 +136,15 @@ for i in tqdm.tqdm(range(n_smps)):
                 torch.squeeze(heatmaps_pred[j-kpt_start,:]).numpy(),
                 type=score_type)
             scores.append(score)
+        # @Apoorva: here is the place to quickly implement the windowed nonconformity score
         max_score = np.max(np.stack(scores))
         obj_scores[obj2idx[obj]].append(max_score)
 
 obj_scores_np = []
 for i in range(n_objs):
     obj_scores_np.append(np.array(obj_scores[i]))
-fname = f'calibration_ellinf_scores_{score_type}_{dataset_name}.pkl'
+fname = f'calibration_scores_{score_type}_{dataset_name}.pkl'
 if do_frcnn:
-    fname = f'calibration_ellinf_scores_{score_type}_{dataset_name}_frcnn.pkl'
+    fname = f'calibration_scores_{score_type}_{dataset_name}_frcnn.pkl'
 with open(fname, 'wb') as f:
     pickle.dump(obj_scores_np, f)

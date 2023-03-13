@@ -6,8 +6,8 @@ import torch
 from PIL import Image
 
 
-from bop_toolkit_lib.dataset_params import *
-from bop_toolkit_lib.inout import load_im, load_json
+from .bop_toolkit_lib.dataset_params import *
+from .bop_toolkit_lib.inout import load_im, load_json
 
 """
 Dataset class that can be used to load BOP data to train detection/keypoint network
@@ -156,7 +156,7 @@ class BOPDataset(torch.utils.data.Dataset):
 
 
     def _get_detection_db(self, db):
-        with open('kpts3d.json', 'r') as infile:
+        with open('keypoint/kpts3d.json', 'r') as infile:
             dataset = self.dataset_name
             if dataset == "lmo-org":
                 dataset = 'lmo'
@@ -258,7 +258,7 @@ class BOPDataset(torch.utils.data.Dataset):
 
 
     def _set_kpts_info(self):
-        with open('kpts3d.json', 'r') as infile:
+        with open('keypoint/kpts3d.json', 'r') as infile:
             dataset = self.dataset_name
             if dataset == "lmo-org":
                 dataset = 'lmo'
