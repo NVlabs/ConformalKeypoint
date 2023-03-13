@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.vscode
 ## Jupyter Notebook ##
 .ipynb_checkpoints
 ## Ignore Mac DS_Store files ##
