@@ -9,28 +9,7 @@ from keypoint.models import FRCNN, StackedHourglass, fasterrcnn_backbone
 from keypoint.bop_dataset import BOPDataset
 from keypoint.train.transforms import ToTensor, Normalize, AffineCrop
 
-from utils import conformity_score
-
-def one_each(pred, thresh=0.0):
-    # Postprocess frcnn: get at most one instance per class
-    # Return: boxes and labels
-    conf = pred['scores'] > thresh
-
-    conf_scores = pred['scores'][conf]
-    conf_boxes = pred['boxes'][conf].int()
-    conf_labels = pred['labels'][conf].int()
-
-    valid = torch.zeros_like(conf_labels).bool()
-    unique_labels = torch.unique(conf_labels)
-    for uni in unique_labels:
-        p = (conf_labels==uni).nonzero(as_tuple=False).reshape(-1)
-        valid[p[0]] = True
-
-    pd_scores = conf_scores[valid]
-    pd_boxes = conf_boxes[valid]
-    pd_labels = conf_labels[valid]
-    
-    return pd_boxes, pd_labels
+from utils import conformity_score, one_each
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--score_type', action='store', type=str)
@@ -41,7 +20,7 @@ score_type  = args.score_type
 do_frcnn    = args.do_frcnn
 
 # Load dataset 
-dataset_name = 'lmo'
+dataset_name = 'lmo' # this the lmo calibration dataset containing 200 images
 root         = './keypoint/data/bop'
 num_classes  = {'lmo':8, 'lmo-org':8} 
 device       = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')

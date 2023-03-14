@@ -2,9 +2,32 @@ import numpy as np
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import matplotlib
+import torch
 
 K     = 100
 alpha = 0.8
+
+def one_each(pred, thresh=0.0):
+    # Postprocess frcnn: get at most one instance per class
+    # Return: boxes and labels
+    conf = pred['scores'] > thresh
+
+    conf_scores = pred['scores'][conf]
+    conf_boxes = pred['boxes'][conf].int()
+    conf_labels = pred['labels'][conf].int()
+
+    valid = torch.zeros_like(conf_labels).bool()
+    unique_labels = torch.unique(conf_labels)
+    for uni in unique_labels:
+        p = (conf_labels==uni).nonzero(as_tuple=False).reshape(-1)
+        valid[p[0]] = True
+
+    pd_scores = conf_scores[valid]
+    pd_boxes = conf_boxes[valid]
+    pd_labels = conf_labels[valid]
+    
+    return pd_boxes, pd_labels
+
 
 def clean_heatmap(heatmap,mode=1):
     '''
@@ -61,6 +84,8 @@ def conformity_score(kpt,heatmap,type="ball"):
     :return
     conformity score
     '''
+
+    heatmap = clean_heatmap(heatmap,mode=1)
        
     if type == "ball":
         r, c = np.unravel_index(

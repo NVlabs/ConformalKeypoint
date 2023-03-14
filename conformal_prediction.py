@@ -1,43 +1,23 @@
 import numpy as np
 import cv2
-from glob import glob
 import matplotlib.pyplot as plt
 import torch
 from torchvision import transforms as T
 import tqdm
 import pickle, argparse
+import os
 
-from models import FRCNN, StackedHourglass, fasterrcnn_backbone
-from bop_dataset import BOPDataset
+from keypoint.models import FRCNN, StackedHourglass, fasterrcnn_backbone
+from keypoint.bop_dataset import BOPDataset
+from keypoint.train.transforms import ToTensor, Normalize, AffineCrop
+from keypoint.misc.pose2d_eval import Pose2DEval
 
-from train.transforms import ToTensor, Normalize, AffineCrop, Normalize_imgnet, Denormalize
-from misc.pose2d_eval import Pose2DEval
-from bop_toolkit_lib.inout import save_bop_results
-from misc.pose2d_eval import Pose2DEval
-from icp_heatmap import icp, draw_icp_circle, draw_icp_ellipse
-
-def one_each(pred, thresh=0.0):
-    # Postprocess frcnn: get at most one instance per class
-    # Return: boxes and labels
-    conf = pred['scores'] > thresh
-
-    conf_scores = pred['scores'][conf]
-    conf_boxes = pred['boxes'][conf].int()
-    conf_labels = pred['labels'][conf].int()
-
-    valid = torch.zeros_like(conf_labels).bool()
-    unique_labels = torch.unique(conf_labels)
-    for uni in unique_labels:
-        p = (conf_labels==uni).nonzero(as_tuple=False).reshape(-1)
-        valid[p[0]] = True
-
-    pd_scores = conf_scores[valid]
-    pd_boxes = conf_boxes[valid]
-    pd_labels = conf_labels[valid]
-    
-    return pd_boxes, pd_labels
+from utils import icp, draw_icp_ball, draw_icp_ellipse
 
 def heatmap2org(kpts,lams,T):
+    '''
+    The heatmap is on the cropped image, this function converts the prediction sets on the cropped image to the original image (which will be used for pose estimation)
+    '''
     A = T[:,:2]
     b = T[:,2]
     kpts_new = np.linalg.solve(A,kpts*4 - b[:,np.newaxis])
@@ -49,8 +29,9 @@ def heatmap2org(kpts,lams,T):
 parser = argparse.ArgumentParser()
 parser.add_argument('--score_type', action='store', type=str)
 parser.add_argument('--eps', type=int)
-parser.add_argument('--save_fig', action='store_true')
 parser.add_argument('--do_frcnn', action='store_true')
+parser.add_argument('--save_fig', action='store_true')
+
 args = parser.parse_args()
 
 score_type = args.score_type
@@ -59,11 +40,11 @@ eps = eps / 100.0
 save_fig = args.save_fig
 do_frcnn = args.do_frcnn
 
-print(f'score type: {score_type}, epsilon: {eps}, save_fig: {save_fig}.')
+print(f'nonconformity function: {score_type}, epsilon: {eps}, save_fig: {save_fig}.')
 
 # Load dataset 
-dataset_name = 'lmo-org'
-root         = './data/bop'
+dataset_name = 'lmo-org' # this is the full lmo dataset containing 1214 images
+root         = './keypoint/data/bop'
 num_classes  = {'lmo':8, 'lmo-org':8} 
 device       = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 dataset      = BOPDataset(root, dataset_name, split='test', return_coco=True)
@@ -72,7 +53,7 @@ dataset._set_kpts_info()
 if do_frcnn:
     # Load Faster-RCNN detector
     detector_trainsform = T.ToTensor()
-    state_dict = torch.load('data/detect_checkpoints/d{}.pt'.format('lmo'), map_location=device)['frcnn']
+    state_dict = torch.load('keypoint/data/detect_checkpoints/d{}.pt'.format('lmo'), map_location=device)['frcnn']
     detector = fasterrcnn_backbone('resnet101', num_classes=1+num_classes[dataset_name]).to(device)
     detector.eval()
     detector.load_state_dict(state_dict)
@@ -84,7 +65,7 @@ transform_list.append(ToTensor())
 transform_list.append(Normalize())
 kpts_transform = T.Compose(transform_list)
 
-state_dict    = torch.load('data/kpts_checkpoints/{}.pt'.format(dataset_name), map_location=device)['stacked_hg']
+state_dict    = torch.load('keypoint/data/kpts_checkpoints/{}.pt'.format(dataset_name), map_location=device)['stacked_hg']
 kpts_detector = StackedHourglass(dataset.n_kpts).to(device)
 kpts_detector.eval()
 kpts_detector.load_state_dict(state_dict)
@@ -98,12 +79,11 @@ lab2obj = {v+1:k for k,v in obj2idx.items()}
 n_objs = len(idx2obj)
 poseEval = Pose2DEval()
 
-img_result_dir = '/home/hengy/Code/6D_Pose/data/bop/lmo-org/test/000002/icp_results'
+img_result_dir = '/home/hengy/Code/ConformalKeypoint/keypoint/data/bop/lmo-org/test/000002/icp_results'
 
-calib_set  = "lmo"
-fname = f'calibration_ellinf_scores_{score_type}_{calib_set}.pkl'
+fname = f'calibration_scores_{score_type}_lmo.pkl'
 if do_frcnn:
-    fname = f'calibration_ellinf_scores_{score_type}_{calib_set}_frcnn.pkl'
+    fname = f'calibration_scores_{score_type}_lmo_frcnn.pkl'
 # Compute quantiles
 with open(fname, 'rb') as f:
     obj_scores = pickle.load(f)
@@ -174,22 +154,18 @@ for i in tqdm.tqdm(range(n_smps)):
         lams = []
         icp_sets = []
         for j in range(kpt_start,kpt_end):
-            if score_type == "radius-maxp":
+            if score_type == "ball":
                 center, radius = icp(
                     torch.squeeze(heatmaps_pred[j-kpt_start,:]).numpy(),
-                    obj_qs[obj2idx[obj]],type=score_type)
+                    obj_qs[obj2idx[obj]],
+                    type=score_type)
 
                 lam = np.eye(2) / (radius**2)
-                kpts.append(center)
-                lams.append(lam)
-                # check1 = poseEval.get_view_kpts(box,torch.tensor(center[np.newaxis,:]*256/64))
-                # check2 = np.linalg.solve(affineT[:,:2],center*256/64 - affineT[:,2])
-                # print(check1)
-                # print(check2)
-                # print(gt_kpt)
+                kpts.append(center) # center
+                lams.append(lam) # information matrix
                 icp_sets.append((center,radius))
 
-            elif score_type == "radius-cov-topk":
+            elif score_type == "ellipse":
                 center, lam = icp(
                     torch.squeeze(heatmaps_pred[j-kpt_start,:]).numpy(),
                     obj_qs[obj2idx[obj]],type=score_type)
@@ -201,29 +177,32 @@ for i in tqdm.tqdm(range(n_smps)):
                 raise RuntimeError('Unknown score type for ICP.')
         
         if save_fig:
-            fname = "{:s}/{:.2f}/{:s}/{:06d}_{:06d}_{:02d}.pdf".format(img_result_dir,eps,score_type,i,meta['im_id'],obj)
+            dir_path = "{:s}/{:.2f}/{:s}".format(img_result_dir,eps,score_type)
+            os.makedirs(dir_path,exist_ok=True)
+            fname = "{:s}/{:06d}_{:06d}_{:02d}.pdf".format(dir_path,i,meta['im_id'],obj)
             if do_frcnn:
-                fname = "{:s}/{:.2f}/{:s}/{:06d}_{:06d}_{:02d}_frcnn.pdf".format(img_result_dir,eps,score_type,i,meta['im_id'],obj)
+                fname = "{:s}/{:06d}_{:06d}_{:02d}_frcnn.pdf".format(dir_path,i,meta['im_id'],obj)
             # plot
             img_disp = cv2.resize((input_crop['image'].permute(1, 2, 0).numpy()) / 2.0 + 0.5,(64,64))
-            if score_type == "radius-maxp":
-                fig = draw_icp_circle(img_disp,heatmaps_pred.numpy(),gt_kpt_crop,icp_sets,fname=fname,show=False)
-            elif score_type == "radius-cov-topk":
+            if score_type == "ball":
+                fig = draw_icp_ball(img_disp,heatmaps_pred.numpy(),gt_kpt_crop,icp_sets,fname=fname,show=False)
+            elif score_type == "ellipse":
                 fig = draw_icp_ellipse(img_disp,heatmaps_pred.numpy(),gt_kpt_crop,icp_sets,fname=fname,show=False)
             plt.close(fig)
 
         kpts = np.stack(kpts,axis=1)
+        # convert the keypoints coordinates to the original image space and save
         kpts_new, lams_new = heatmap2org(kpts,lams,affineT)
         obj_kpts[obj2idx[obj]].append(kpts_new)
         obj_lams[obj2idx[obj]].append(lams_new)
         obj_imgs[obj2idx[obj]].append(i)
 
-if not save_fig:
-    data = {"kpts": obj_kpts,
-            "lams": obj_lams,
-            "imgs": obj_imgs}
-    fname = "icp_sets_ellinf_{:s}_{:.2f}.pkl".format(score_type,eps)
-    if do_frcnn:
-        fname = "icp_sets_ellinf_{:s}_{:.2f}_frcnn.pkl".format(score_type,eps)
-    with open(fname, 'wb') as f:
-        pickle.dump(data, f)
+# save the keypoint prediction sets
+data = {"kpts": obj_kpts,
+        "lams": obj_lams,
+        "imgs": obj_imgs}
+fname = "icp_sets_{:s}_{:.2f}.pkl".format(score_type,eps)
+if do_frcnn:
+    fname = "icp_sets_{:s}_{:.2f}_frcnn.pkl".format(score_type,eps)
+with open(fname, 'wb') as f:
+    pickle.dump(data, f)
