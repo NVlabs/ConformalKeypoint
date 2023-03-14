@@ -79,7 +79,7 @@ lab2obj = {v+1:k for k,v in obj2idx.items()}
 n_objs = len(idx2obj)
 poseEval = Pose2DEval()
 
-img_result_dir = '/home/hengy/Code/ConformalKeypoint/keypoint/data/bop/lmo-org/test/000002/icp_results'
+img_result_dir = './keypoint/data/bop/lmo-org/test/000002/icp_results'
 
 fname = f'calibration_scores_{score_type}_lmo.pkl'
 if do_frcnn:
