@@ -18,6 +18,6 @@ The calibration scores will be saved into a pickle file.
 ## Conformal prediction
 
 ```
-python conformal_prediction.py --score_type ball --epsilon 10 --save_fig
+python conformal_prediction.py --score_type ball --eps 10 --save_fig
 ```
 will write a set of pdf files drawing the conformal prediction sets (balls) into `keypoint/data/bop/lmo-org/icp_results`. You can change the results folder in `conformal_prediction.py`.

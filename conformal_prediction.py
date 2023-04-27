@@ -13,6 +13,7 @@ from keypoint.train.transforms import ToTensor, Normalize, AffineCrop
 from keypoint.misc.pose2d_eval import Pose2DEval
 
 from utils import icp, draw_icp_ball, draw_icp_ellipse
+import time
 
 def heatmap2org(kpts,lams,T):
     '''
@@ -100,6 +101,9 @@ obj_qs = np.array(obj_qs)
 obj_kpts = [[] for i in range(n_objs)]
 obj_lams = [[] for i in range(n_objs)]
 obj_imgs = [[] for i in range(n_objs)]
+obj_kpts_gt = [[] for i in range(n_objs)]
+obj_R_gt = [[] for i in range(n_objs)]
+obj_t_gt = [[] for i in range(n_objs)]
 
 for i in tqdm.tqdm(range(n_smps)):
     sample      = dataset[i]
@@ -108,7 +112,8 @@ for i in tqdm.tqdm(range(n_smps)):
     gt_boxes    = sample['boxes']
     gt_objs     = [lab2obj[l] for l in sample['labels']]
     gt_kpts     = meta['keypoints']
-
+    gt_Rs       = meta['Rs']
+    gt_ts       = meta['ts']
     if do_frcnn:
         # Object detection
         with torch.no_grad():
@@ -131,7 +136,8 @@ for i in tqdm.tqdm(range(n_smps)):
         gt_kpts = gt_kpts_pd
 
 
-    for obj, box, gt_kpt in zip(gt_objs, gt_boxes, gt_kpts):
+    for obj, box, gt_kpt, gt_R, gt_t in zip(gt_objs, gt_boxes, gt_kpts, gt_Rs, gt_ts):
+        
         box         = [box[0], box[1], box[2]-box[0], box[3]-box[1]]
         gt_kpt_homo = np.concatenate((gt_kpt,np.ones((gt_kpt.shape[0],1))),axis=1)
         input_crop  = {'image':image, 'bb':box, 'keypoints':gt_kpt_homo} 
@@ -153,6 +159,7 @@ for i in tqdm.tqdm(range(n_smps)):
         kpts = []
         lams = []
         icp_sets = []
+        
         for j in range(kpt_start,kpt_end):
             if score_type == "ball":
                 center, radius = icp(
@@ -196,11 +203,19 @@ for i in tqdm.tqdm(range(n_smps)):
         obj_kpts[obj2idx[obj]].append(kpts_new)
         obj_lams[obj2idx[obj]].append(lams_new)
         obj_imgs[obj2idx[obj]].append(i)
+        obj_kpts_gt[obj2idx[obj]].append(gt_kpt.transpose())
+        obj_R_gt[obj2idx[obj]].append(gt_R)
+        obj_t_gt[obj2idx[obj]].append(gt_t)
+        
 
 # save the keypoint prediction sets
 data = {"kpts": obj_kpts,
         "lams": obj_lams,
-        "imgs": obj_imgs}
+        "imgs": obj_imgs, 
+        "kpts_gt": obj_kpts_gt,
+        "R_gt": obj_R_gt,
+        "t_gt": obj_t_gt,
+        }
 fname = "icp_sets_{:s}_{:.2f}.pkl".format(score_type,eps)
 if do_frcnn:
     fname = "icp_sets_{:s}_{:.2f}_frcnn.pkl".format(score_type,eps)
